@@ -2,6 +2,7 @@ from PIL import Image
 import numpy as np
 import torch
 import torchvision.transforms as T
+from tqdm import tqdm
 
 totensor = T.ToTensor()
 topil = T.ToPILImage()
@@ -47,4 +48,28 @@ def prepare_image(image):
     image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
 
     return image[0]
+
+def pgd(X, model, eps=0.1, step_size=0.015, iters=40, clamp_min=0, clamp_max=1, mask=None):
+    X_adv = X.clone().detach() + (torch.rand(*X.shape)*2*eps-eps).cuda()
+    pbar = tqdm(range(iters))
+    for i in pbar:
+        actual_step_size = step_size - (step_size - step_size / 100) / iters * i  
+
+        X_adv.requires_grad_(True)
+
+        loss = (model(X_adv).latent_dist.mean).norm()
+
+        pbar.set_description(f"[Running attack]: Loss {loss.item():.5f} | step size: {actual_step_size:.4}")
+
+        grad, = torch.autograd.grad(loss, [X_adv])
+        
+        X_adv = X_adv - grad.detach().sign() * actual_step_size
+        X_adv = torch.minimum(torch.maximum(X_adv, X - eps), X + eps)
+        X_adv.data = torch.clamp(X_adv, min=clamp_min, max=clamp_max)
+        X_adv.grad = None    
+        
+        if mask is not None:
+            X_adv.data *= mask
+            
+    return X_adv
  
